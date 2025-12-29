@@ -1,0 +1,137 @@
+Name:Ayushi singh
+Mail-id:saayushi0808@gmail.com
+
+Part 1: Code Review & Debugging (30 minutes)
+A previous intern wrote this API endpoint for adding new products. Something is wrong - the code compiles but doesn't work as expected in production.
+@app.route('/api/products', methods=['POST'])
+def create_product():
+    data = request.json
+    
+    # Create new product
+    product = Product(
+        name=data['name'],
+        sku=data['sku'],
+        price=data['price'],
+        warehouse_id=data['warehouse_id']
+    )
+    
+    db.session.add(product)
+    db.session.commit()
+    
+    # Update inventory count
+    inventory = Inventory(
+        product_id=product.id,
+        warehouse_id=data['warehouse_id'],
+        quantity=data['initial_quantity']
+    )
+    
+    db.session.add(inventory)
+    db.session.commit()
+    
+    return {"message": "Product created", "product_id": product.id}
+
+**Issues in this format
+1.No input field
+Impact:
+→data['name'], data['sku']
+→API fetches the data without checking whether they are present or valid, can cause runtime errors 
+→It can cause ambiguity here, or it can fail if any field is missing.
+
+Fix:
+→We can add values here to ensure Api fetches the correct data.
+
+2.No error Handling
+→errors can be handled well by try-catch block, if something goes wrong.
+          Impact:
+→Unhandled exceptions can crash the API 
+→Incorrect data can be present in database.
+Fix :
+→implement try catch block to fix errors or rollback if any translation fails, it save the data and bring the system to last saved state.
+
+3.Price should be in float
+→The price is accepted directly without ensuring proper decimal handling.
+          Impact:
+→This can lead to incorrect pricing and financial calculations
+
+Fix:
+→Use a decimal type like ‘decimal’ for price values and validate the input format.
+
+4.Price should be in float
+→some fields are assumed to be present.
+eg:  quantity=data['initial_quantity']
+         Impact:
+→The API can crash if certain fields are missing
+
+Fix:
+→We can use decimal type here for for price values.
+
+5. Multiple Commits present
+→code commits the product and inventory in two separate database commits.
+    db.session.add(product)
+    db.session.commit()
+
+    db.session.add(inventory)
+    db.session.commit()
+
+         Impact:
+→If inventory creation fails, the product is still saved
+
+
+→This can leave the system in an inconsistent state
+In real apps:
+Network can fail, DB can timeout ,Unexpected bugs happen
+Fix:
+→Use safe access methods like data.get() with default values where applicable.
+
+6. Product can be linked to multiple warehouse
+→The product is created with a single warehouse id, but according to the requirements, a product can exist in multiple warehouses.
+
+ Impact:
+→this data model does not support multiple warehouse inventory
+
+
+→the same product will be duplicated for different warehouse again and again will make the work more tedious.
+Fix:
+→Remove warehouse_id  from the product creation and manage warehouse-specific quantities through the inventory table.
+
+code:
+from flask import request, jsonify
+from decimal import Decimal
+
+@app.route('/api/products', methods=['POST'])
+def create_product():
+    data = request.json
+
+    # check for required stuff
+    if not data.get('name') or not data.get('sku') or 'initial_quantity' not in data:
+        return jsonify({"error": "Missing some required fields"}), 400
+
+    name = data['name']
+    sku = data['sku']
+    price = data.get('price', 0)
+    warehouse_id = data.get('warehouse_id')
+    qty = data['initial_quantity']
+
+    try:
+        # check sku uniqueness
+        exist = Product.query.filter_by(sku=sku).first()
+        if exist:
+            return jsonify({"error": "SKU already used"}), 400
+
+        # make product
+        product = Product(name=name, sku=sku, price=Decimal(price))
+        db.session.add(product)
+        db.session.flush()  # need product.id before commit
+
+        # add inventory if warehouse given
+        if warehouse_id:
+            inv = Inventory(product_id=product.id, warehouse_id=warehouse_id, quantity=qty)
+   db.session.add(inv)
+
+        db.session.commit()
+        return jsonify({"message": "Product created", "product_id": product.id})
+
+    except:
+        db.session.rollback()
+        return jsonify({"error": "Something went wrong, maybe db issue"}), 500
+
